@@ -1,0 +1,21 @@
+.scroller {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem 1rem 0.5rem;
+  background:
+    radial-gradient(ellipse at top, rgba(15, 110, 110, 0.05), transparent 55%),
+    var(--bg-chat);
+}
+
+.inner {
+  position: relative;
+  width: 100%;
+}
+
+.item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: 0.75rem;
+}
