@@ -1,0 +1,122 @@
+.page {
+  height: 100%;
+  overflow: auto;
+  padding: 1.25rem 1.5rem 2.5rem;
+  background:
+    radial-gradient(ellipse at top right, rgba(15, 110, 110, 0.1), transparent 40%),
+    var(--bg);
+}
+
+.header h1 {
+  font-size: 1.8rem;
+  margin-bottom: 1rem;
+}
+
+.composer,
+.post {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow-sm);
+  animation: fade-up 420ms ease both;
+}
+
+.composer h2 {
+  font-size: 1.05rem;
+  margin-bottom: 0.65rem;
+}
+
+.composerFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.feed {
+  max-width: 680px;
+}
+
+.postHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.75rem;
+}
+
+.postHeader > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.postHeader time {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.body {
+  margin: 0 0 0.75rem;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.postActions button {
+  border: none;
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.65rem;
+  font-weight: 650;
+  font-size: 0.85rem;
+}
+
+.comments {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.comments h4 {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.comment {
+  display: flex;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+
+.comment strong {
+  color: var(--text);
+}
+
+.commentForm {
+  display: flex;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+}
+
+.commentForm input {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.7rem;
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 1rem;
+  }
+}

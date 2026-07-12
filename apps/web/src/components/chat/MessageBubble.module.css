@@ -1,0 +1,135 @@
+.row {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-end;
+  max-width: min(720px, 92%);
+  animation: fadeUp 280ms ease both;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mine {
+  margin-left: auto;
+  flex-direction: row-reverse;
+}
+
+.theirs {
+  margin-right: auto;
+}
+
+.pending {
+  opacity: 0.7;
+}
+
+.failed .bubble {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.stack {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.mine .stack {
+  align-items: flex-end;
+}
+
+.name {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 0 0.35rem;
+}
+
+.bubble {
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius);
+  background: var(--bubble-theirs);
+  color: var(--bubble-theirs-text);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+}
+
+.mine .bubble {
+  background: var(--bubble-mine);
+  color: var(--bubble-mine-text);
+  border-color: transparent;
+}
+
+.quote {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  border-left: 3px solid currentColor;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.82rem;
+  opacity: 0.9;
+}
+
+.quote span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revoked {
+  opacity: 0.75;
+  font-size: 0.9rem;
+}
+
+.image {
+  max-width: min(280px, 70vw);
+  border-radius: var(--radius-sm);
+}
+
+.file,
+.voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: inherit;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 0 0.25rem;
+}
+
+.actions {
+  display: none;
+  gap: 0.35rem;
+}
+
+.row:hover .actions {
+  display: inline-flex;
+}
+
+.actions button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 0;
+}
+
+.actions button:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}

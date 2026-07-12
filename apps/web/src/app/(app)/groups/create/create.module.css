@@ -1,0 +1,64 @@
+.page {
+  height: 100%;
+  overflow: auto;
+  padding: 1.5rem;
+  display: grid;
+  place-items: start center;
+  background:
+    radial-gradient(ellipse at top, rgba(15, 110, 110, 0.12), transparent 50%),
+    var(--bg);
+}
+
+.panel {
+  width: min(560px, 100%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem 1.25rem;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  animation: fade-up 420ms ease both;
+}
+
+.panel h1 {
+  font-size: 1.55rem;
+}
+
+.panel h2 {
+  font-size: 0.95rem;
+  margin-bottom: 0.55rem;
+}
+
+.members {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem;
+  background: var(--bg);
+}
+
+.member {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.45rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.member:hover {
+  background: var(--bg-panel);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}

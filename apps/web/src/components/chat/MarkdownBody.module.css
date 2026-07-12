@@ -1,0 +1,62 @@
+.body {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.body :global(p) {
+  margin: 0 0 0.55rem;
+  white-space: normal;
+}
+
+.body :global(p:last-child) {
+  margin-bottom: 0;
+}
+
+.body :global(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.body :global(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.86em;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+.body :global(pre) {
+  background: rgba(0, 0, 0, 0.08);
+  padding: 0.7rem;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.body :global(pre code) {
+  background: transparent;
+  padding: 0;
+}
+
+.body :global(ul),
+.body :global(ol) {
+  margin: 0.35rem 0;
+  padding-left: 1.25rem;
+  white-space: normal;
+}
+
+.body :global(blockquote) {
+  margin: 0.4rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid currentColor;
+  opacity: 0.85;
+  white-space: normal;
+}
+
+.body :global(img) {
+  border-radius: var(--radius-sm);
+  margin: 0.35rem 0;
+}
