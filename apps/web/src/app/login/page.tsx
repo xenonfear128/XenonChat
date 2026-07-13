@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { FormEvent, Suspense, useState } from 'react';
+import { FormEvent, Suspense, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AuthShell } from '@/components/auth/AuthShell';
 import { Button, Field, Input } from '@/components/ui';
@@ -15,17 +15,29 @@ function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
-  const [email, setEmail] = useState('');
+  const hydrated = useAuthStore((s) => s.hydrated);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (hydrated && accessToken) {
+      router.replace(params.get('next') || '/chats');
+    }
+  }, [accessToken, hydrated, params, router]);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const data = await api.login({ email, password, device_name: 'web' });
+      const data = await api.login({
+        identifier,
+        password,
+        device_name: 'web',
+      });
       setSession({
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
@@ -51,14 +63,18 @@ function LoginForm() {
       }
     >
       <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
-        <Field label={t('email')} htmlFor="email" error={error || undefined}>
+        <Field
+          label={t('emailOrUsername')}
+          htmlFor="identifier"
+          error={error || undefined}
+        >
           <Input
-            id="email"
-            type="email"
-            autoComplete="email"
+            id="identifier"
+            type="text"
+            autoComplete="username"
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
           />
         </Field>
         <Field label={t('password')} htmlFor="password">
@@ -86,7 +102,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense>
+    <Suspense fallback={null}>
       <LoginForm />
     </Suspense>
   );

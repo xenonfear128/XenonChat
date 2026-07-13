@@ -25,13 +25,9 @@ type AuthState = {
   }) => void;
 };
 
-function syncAuthCookie(accessToken: string | null) {
+function clearLegacyAuthCookie() {
   if (typeof document === 'undefined') return;
-  if (accessToken) {
-    document.cookie = `xc_access=${accessToken}; path=/; max-age=2592000; SameSite=Lax`;
-  } else {
-    document.cookie = 'xc_access=; path=/; max-age=0; SameSite=Lax';
-  }
+  document.cookie = 'xc_access=; path=/; max-age=0; SameSite=Lax';
 }
 
 function syncLocaleCookie(locale?: string) {
@@ -48,17 +44,16 @@ export const useAuthStore = create<AuthState>()(
       hydrated: false,
       setHydrated: (v) => set({ hydrated: v }),
       setSession: ({ accessToken, refreshToken, user }) => {
-        syncAuthCookie(accessToken);
+        clearLegacyAuthCookie();
         syncLocaleCookie(user.language);
         set({ accessToken, refreshToken, user });
       },
       setUser: (user) => set({ user }),
       setTokens: (accessToken, refreshToken) => {
-        syncAuthCookie(accessToken);
         set({ accessToken, refreshToken });
       },
       clear: () => {
-        syncAuthCookie(null);
+        clearLegacyAuthCookie();
         set({ accessToken: null, refreshToken: null, user: null });
       },
       applyPreferences: (prefs) => {
@@ -82,7 +77,7 @@ export const useAuthStore = create<AuthState>()(
         user: s.user,
       }),
       onRehydrateStorage: () => (state) => {
-        if (state?.accessToken) syncAuthCookie(state.accessToken);
+        clearLegacyAuthCookie();
         if (state?.user?.language) syncLocaleCookie(state.user.language);
         state?.setHydrated(true);
       },

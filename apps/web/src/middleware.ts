@@ -1,43 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/register', '/forgot-password'];
-
 export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-
-  if (
-    pathname.startsWith('/_next') ||
-    pathname.startsWith('/api') ||
-    pathname.includes('.')
-  ) {
-    return NextResponse.next();
+  // Authentication state is persisted by the client and all sensitive data is
+  // protected by the API. A previous version also copied the access token into
+  // a JavaScript-readable cookie and used cookie presence for redirects. That
+  // created redirect loops whenever cookie and localStorage diverged. Remove
+  // the legacy cookie and let the authenticated app layout own navigation.
+  const response = NextResponse.next();
+  if (request.cookies.has('xc_access')) {
+    response.cookies.delete('xc_access');
   }
-
-  const token = request.cookies.get('xc_access')?.value;
-  const isPublic = PUBLIC_PATHS.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`),
-  );
-
-  if (!token && !isPublic && pathname !== '/') {
-    const url = request.nextUrl.clone();
-    url.pathname = '/login';
-    url.searchParams.set('next', pathname);
-    return NextResponse.redirect(url);
-  }
-
-  if (token && isPublic) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/chats';
-    return NextResponse.redirect(url);
-  }
-
-  if (pathname === '/') {
-    const url = request.nextUrl.clone();
-    url.pathname = token ? '/chats' : '/login';
-    return NextResponse.redirect(url);
-  }
-
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {

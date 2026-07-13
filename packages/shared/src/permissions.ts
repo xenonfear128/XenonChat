@@ -81,9 +81,16 @@ export function computeExpiresAt(
 }
 
 export function isPrivateIp(hostname: string): boolean {
-  const lower = hostname.toLowerCase();
-  if (lower === 'localhost' || lower === '0.0.0.0' || lower.endsWith('.local')) return true;
-  if (lower === 'metadata.google.internal') return true;
+  const lower = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (
+    lower === 'localhost' ||
+    lower === '0.0.0.0' ||
+    lower.endsWith('.localhost') ||
+    lower.endsWith('.local') ||
+    lower.endsWith('.internal')
+  ) {
+    return true;
+  }
 
   const ipv4 = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (ipv4) {
@@ -97,8 +104,24 @@ export function isPrivateIp(hostname: string): boolean {
     if (a === 100 && b >= 64 && b <= 127) return true;
   }
   if (hostname.includes(':')) {
-    const h = hostname.toLowerCase();
-    if (h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
+    const h = lower;
+    if (
+      h === '::' ||
+      h === '::1' ||
+      h.startsWith('fc') ||
+      h.startsWith('fd') ||
+      h.startsWith('fe8') ||
+      h.startsWith('fe9') ||
+      h.startsWith('fea') ||
+      h.startsWith('feb') ||
+      h.startsWith('ff') ||
+      h.startsWith('::ffff:0:') ||
+      h.startsWith('::ffff:127.') ||
+      h.startsWith('::ffff:10.') ||
+      h.startsWith('::ffff:192.168.')
+    ) {
+      return true;
+    }
   }
   return false;
 }
@@ -107,6 +130,7 @@ export function isSafePreviewUrl(raw: string): boolean {
   try {
     const url = new URL(raw);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.username || url.password) return false;
     if (isPrivateIp(url.hostname)) return false;
     return true;
   } catch {

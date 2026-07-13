@@ -7,10 +7,11 @@ import {
   DeleteObjectCommand,
   CreateBucketCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { randomUUID } from 'crypto';
-import { mkdir, writeFile, readFile, unlink } from 'fs/promises';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { mkdir, writeFile, readFile, stat, unlink } from 'fs/promises';
 import path from 'path';
 
 @Injectable()
@@ -19,10 +20,15 @@ export class StorageService implements OnModuleInit {
   private bucket: string;
   private useLocalFallback = false;
   private localRoot: string;
+  private readonly localSigningSecret: string;
 
   constructor(private readonly config: ConfigService) {
     this.bucket = config.get('OBJECT_STORAGE_BUCKET', 'xenonchat');
     this.localRoot = path.resolve(process.cwd(), '.uploads');
+    this.localSigningSecret = config.get(
+      'LOCAL_STORAGE_SIGNING_SECRET',
+      config.get('JWT_SECRET', 'development-local-storage-secret'),
+    );
   }
 
   async onModuleInit() {
@@ -66,7 +72,7 @@ export class StorageService implements OnModuleInit {
 
   async putObject(key: string, body: Buffer, contentType: string) {
     if (this.useLocalFallback || !this.client) {
-      const full = path.join(this.localRoot, key);
+      const full = this.resolveLocalPath(key);
       await mkdir(path.dirname(full), { recursive: true });
       await writeFile(full, body);
       return;
@@ -83,7 +89,7 @@ export class StorageService implements OnModuleInit {
 
   async getSignedDownloadUrl(key: string, expiresIn = 600) {
     if (this.useLocalFallback || !this.client) {
-      return `/api/media/local/${encodeURIComponent(key)}`;
+      return `/api/media/local/${this.signLocalToken(key, 'read', expiresIn)}`;
     }
     return getSignedUrl(
       this.client,
@@ -95,7 +101,7 @@ export class StorageService implements OnModuleInit {
   async getSignedUploadUrl(key: string, contentType: string, expiresIn = 600) {
     if (this.useLocalFallback || !this.client) {
       return {
-        uploadUrl: `/api/media/local-upload/${encodeURIComponent(key)}`,
+        uploadUrl: `/api/media/local-upload/${this.signLocalToken(key, 'write', expiresIn)}`,
         key,
         local: true,
       };
@@ -115,7 +121,7 @@ export class StorageService implements OnModuleInit {
   async deleteObject(key: string) {
     if (this.useLocalFallback || !this.client) {
       try {
-        await unlink(path.join(this.localRoot, key));
+        await unlink(this.resolveLocalPath(key));
       } catch {
         /* ignore */
       }
@@ -124,8 +130,76 @@ export class StorageService implements OnModuleInit {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
+  async getObjectSize(key: string) {
+    if (this.useLocalFallback || !this.client) {
+      const info = await stat(this.resolveLocalPath(key));
+      return info.size;
+    }
+    const result = await this.client.send(
+      new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+    return result.ContentLength ?? 0;
+  }
+
   async readLocal(key: string) {
-    return readFile(path.join(this.localRoot, key));
+    return readFile(this.resolveLocalPath(key));
+  }
+
+  verifyLocalToken(token: string, operation: 'read' | 'write') {
+    const [payload, signature] = token.split('.');
+    if (!payload || !signature) throw new Error('Invalid storage token');
+    const expected = createHmac('sha256', this.localSigningSecret)
+      .update(payload)
+      .digest('base64url');
+    const expectedBuffer = Buffer.from(expected);
+    const signatureBuffer = Buffer.from(signature);
+    if (
+      expectedBuffer.length !== signatureBuffer.length ||
+      !timingSafeEqual(expectedBuffer, signatureBuffer)
+    ) {
+      throw new Error('Invalid storage token');
+    }
+    const value = JSON.parse(
+      Buffer.from(payload, 'base64url').toString('utf8'),
+    ) as { key?: string; operation?: string; expiresAt?: number };
+    if (
+      !value.key ||
+      value.operation !== operation ||
+      !value.expiresAt ||
+      value.expiresAt < Date.now()
+    ) {
+      throw new Error('Expired storage token');
+    }
+    this.resolveLocalPath(value.key);
+    return value.key;
+  }
+
+  private signLocalToken(
+    key: string,
+    operation: 'read' | 'write',
+    expiresIn: number,
+  ) {
+    this.resolveLocalPath(key);
+    const payload = Buffer.from(
+      JSON.stringify({
+        key,
+        operation,
+        expiresAt: Date.now() + expiresIn * 1000,
+      }),
+    ).toString('base64url');
+    const signature = createHmac('sha256', this.localSigningSecret)
+      .update(payload)
+      .digest('base64url');
+    return `${payload}.${signature}`;
+  }
+
+  private resolveLocalPath(key: string) {
+    const fullPath = path.resolve(this.localRoot, key);
+    const rootPrefix = `${this.localRoot}${path.sep}`;
+    if (!fullPath.startsWith(rootPrefix)) {
+      throw new Error('Invalid storage path');
+    }
+    return fullPath;
   }
 
   getBucket() {

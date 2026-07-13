@@ -44,11 +44,23 @@ export const registerSchema = z.object({
   nickname: z.string().min(NICKNAME_MIN).max(NICKNAME_MAX),
 });
 
-export const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1).max(128),
-  device_name: z.string().max(128).optional(),
-});
+export const loginSchema = z
+  .object({
+    identifier: z.string().trim().min(1).max(255).optional(),
+    // Backward-compatible with clients that still send `email`.
+    email: z.string().trim().min(1).max(255).optional(),
+    password: z.string().min(1).max(128),
+    device_name: z.string().max(128).optional(),
+  })
+  .refine((value) => Boolean(value.identifier || value.email), {
+    message: 'LOGIN_IDENTIFIER_REQUIRED',
+    path: ['identifier'],
+  })
+  .transform((value) => ({
+    identifier: (value.identifier ?? value.email)!.toLowerCase(),
+    password: value.password,
+    device_name: value.device_name,
+  }));
 
 export const updateProfileSchema = z.object({
   nickname: z.string().min(NICKNAME_MIN).max(NICKNAME_MAX).optional(),

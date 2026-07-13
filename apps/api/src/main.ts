@@ -11,18 +11,27 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
+  const maxUploadSize = Number(process.env.MAX_UPLOAD_SIZE ?? 52428800);
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: true, bodyLimit: 20 * 1024 * 1024 }),
+    new FastifyAdapter({ logger: true, bodyLimit: maxUploadSize + 1024 * 1024 }),
   );
 
+  const allowedOrigins = (
+    process.env.CORS_ORIGINS ??
+    process.env.APP_BASE_URL ??
+    'http://localhost:3000'
+  )
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
   await app.register(cors as never, {
-    origin: true,
-    credentials: true,
+    origin: allowedOrigins,
+    credentials: false,
   });
   await app.register(cookie as never);
   await app.register(multipart as never, {
-    limits: { fileSize: Number(process.env.MAX_UPLOAD_SIZE ?? 52428800) },
+    limits: { fileSize: maxUploadSize },
   });
 
   app.useWebSocketAdapter(new WsAdapter(app));

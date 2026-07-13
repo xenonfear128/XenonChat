@@ -53,6 +53,11 @@ type ChatCacheState = {
     clientMessageId: string,
     message: ChatMessage,
   ) => void;
+  updateByClientId: (
+    conversationId: string,
+    clientMessageId: string,
+    patch: Partial<ChatMessage>,
+  ) => void;
 };
 
 export const useChatStore = create<ChatCacheState>((set) => ({
@@ -115,6 +120,18 @@ export const useChatStore = create<ChatCacheState>((set) => ({
         ...s.messagesByConversation,
         [conversationId]: (s.messagesByConversation[conversationId] ?? []).map(
           (m) => (m.client_message_id === clientMessageId ? message : m),
+        ),
+      },
+    })),
+  updateByClientId: (conversationId, clientMessageId, patch) =>
+    set((s) => ({
+      messagesByConversation: {
+        ...s.messagesByConversation,
+        [conversationId]: (s.messagesByConversation[conversationId] ?? []).map(
+          (message) =>
+            message.client_message_id === clientMessageId
+              ? { ...message, ...patch }
+              : message,
         ),
       },
     })),

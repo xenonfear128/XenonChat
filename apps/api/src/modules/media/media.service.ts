@@ -33,16 +33,82 @@ export class MediaService {
     return Number(this.config.get('MAX_UPLOAD_SIZE', 52428800));
   }
 
+  private allowedForKind(kind: string) {
+    const allowed = ALLOWED[kind];
+    if (!allowed) {
+      throw new AppError(
+        ErrorCodes.FILE_TYPE_NOT_ALLOWED,
+        'Unknown media kind',
+        400,
+      );
+    }
+    return allowed;
+  }
+
+  private async canViewMomentMedia(userId: string, mediaId: string) {
+    const links = await this.prisma.momentPostMedia.findMany({
+      where: { mediaId, post: { deletedAt: null } },
+      include: {
+        post: {
+          include: {
+            author: { include: { privacy: true } },
+            visibilityRules: { where: { userId } },
+          },
+        },
+      },
+    });
+
+    for (const link of links) {
+      const post = link.post;
+      if (post.authorId === userId) return true;
+      if (post.author.privacy?.showMoments === false) continue;
+      const blocked = await this.prisma.blockedUser.findFirst({
+        where: {
+          OR: [
+            { blockerUserId: userId, blockedUserId: post.authorId },
+            { blockerUserId: post.authorId, blockedUserId: userId },
+          ],
+        },
+        select: { id: true },
+      });
+      if (blocked) continue;
+      if (post.visibility === 'public') return true;
+      if (
+        post.visibility === 'selected' &&
+        post.visibilityRules.length > 0
+      ) {
+        return true;
+      }
+      if (post.visibility === 'friends') {
+        const contact = await this.prisma.contact.findUnique({
+          where: {
+            ownerUserId_contactUserId: {
+              ownerUserId: userId,
+              contactUserId: post.authorId,
+            },
+          },
+          select: { id: true },
+        });
+        if (contact) return true;
+      }
+    }
+    return false;
+  }
+
   async createUploadUrl(
     userId: string,
     input: { filename: string; mime_type: string; size_bytes: number; kind?: string },
   ) {
     await this.rateLimit.assertUpload(userId);
-    if (input.size_bytes > this.maxSize()) {
+    if (
+      !Number.isSafeInteger(input.size_bytes) ||
+      input.size_bytes <= 0 ||
+      input.size_bytes > this.maxSize()
+    ) {
       throw new AppError(ErrorCodes.FILE_TOO_LARGE, 'File too large');
     }
     const kind = input.kind ?? 'file';
-    const allowed = ALLOWED[kind] ?? [...ALLOWED.image, ...ALLOWED.video, ...ALLOWED.voice, ...ALLOWED.file];
+    const allowed = this.allowedForKind(kind);
     if (!allowed.includes(input.mime_type)) {
       throw new AppError(ErrorCodes.FILE_TYPE_NOT_ALLOWED, 'File type not allowed');
     }
@@ -71,9 +137,26 @@ export class MediaService {
 
   async complete(userId: string, mediaId: string, meta?: { width?: number; height?: number; duration_ms?: number }) {
     const media = await this.prisma.mediaObject.findFirst({
-      where: { id: mediaId, uploaderId: userId },
+      where: { id: mediaId, uploaderId: userId, status: 'pending' },
     });
     if (!media) throw new AppError(ErrorCodes.MEDIA_NOT_FOUND, 'Media not found', 404);
+    let uploadedSize: number;
+    try {
+      uploadedSize = await this.storage.getObjectSize(media.storageKey);
+    } catch {
+      throw new AppError(
+        ErrorCodes.MEDIA_NOT_FOUND,
+        'Uploaded object was not found',
+        400,
+      );
+    }
+    if (uploadedSize <= 0 || uploadedSize !== media.sizeBytes) {
+      throw new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        'Uploaded file size does not match',
+        400,
+      );
+    }
     const updated = await this.prisma.mediaObject.update({
       where: { id: mediaId },
       data: {
@@ -99,12 +182,17 @@ export class MediaService {
     if (buffer.length > this.maxSize()) {
       throw new AppError(ErrorCodes.FILE_TOO_LARGE, 'File too large');
     }
+    const normalizedKind = kind ?? 'file';
+    const allowedList = this.allowedForKind(normalizedKind);
     const detected = detectMimeFromBuffer(buffer);
-    const effectiveMime = detected?.mime ?? mimeType;
-    const allowedList = kind
-      ? ALLOWED[kind] ?? Object.values(ALLOWED).flat()
-      : Object.values(ALLOWED).flat();
-    if (!allowedList.includes(effectiveMime) && !allowedList.includes(mimeType)) {
+    const effectiveMime =
+      detected?.mime === 'video/webm' && mimeType === 'audio/webm'
+        ? 'audio/webm'
+        : (detected?.mime ?? mimeType);
+    if (
+      !allowedList.includes(effectiveMime) ||
+      (normalizedKind !== 'file' && !detected)
+    ) {
       throw new AppError(ErrorCodes.FILE_TYPE_NOT_ALLOWED, 'File type not allowed');
     }
     const safeName = filename.replace(/[^\w.\-()+ ]+/g, '_').slice(0, 180);
@@ -147,13 +235,15 @@ export class MediaService {
             },
             OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
             revokedAt: null,
+            deletedAt: null,
+            deletions: { none: { userId } },
           },
         },
       });
-      const momentLinked = await this.prisma.momentPostMedia.findFirst({
-        where: { mediaId },
-      });
-      if (!linked && !momentLinked) {
+      const canViewMoment = linked
+        ? false
+        : await this.canViewMomentMedia(userId, mediaId);
+      if (!linked && !canViewMoment) {
         throw new AppError(ErrorCodes.PERMISSION_DENIED, 'No access', 403);
       }
     }
@@ -167,12 +257,32 @@ export class MediaService {
     };
   }
 
-  async localUpload(key: string, buffer: Buffer, contentType: string) {
-    await this.storage.putObject(decodeURIComponent(key), buffer, contentType);
+  async localUpload(token: string, buffer: Buffer, contentType: string) {
+    let key: string;
+    try {
+      key = this.storage.verifyLocalToken(token, 'write');
+    } catch {
+      throw new AppError(
+        ErrorCodes.PERMISSION_DENIED,
+        'Invalid or expired upload URL',
+        403,
+      );
+    }
+    await this.storage.putObject(key, buffer, contentType);
     return { success: true };
   }
 
-  async readLocal(key: string) {
-    return this.storage.readLocal(decodeURIComponent(key));
+  async readLocal(token: string) {
+    let key: string;
+    try {
+      key = this.storage.verifyLocalToken(token, 'read');
+    } catch {
+      throw new AppError(
+        ErrorCodes.PERMISSION_DENIED,
+        'Invalid or expired download URL',
+        403,
+      );
+    }
+    return this.storage.readLocal(key);
   }
 }

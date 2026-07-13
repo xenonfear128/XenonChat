@@ -33,7 +33,10 @@ export class AuthController {
   @Get('devices')
   @UseGuards(AuthGuard)
   async devices(@CurrentUser() user: AuthUser) {
-    return { ok: true, data: await this.auth.listDevices(user.id) };
+    return {
+      ok: true,
+      data: await this.auth.listDevices(user.id, user.sessionId),
+    };
   }
 
   @Delete('devices/:deviceId')
@@ -54,8 +57,24 @@ export class AuthController {
     };
   }
 
-  @Post('reset-password')
-  async resetPassword(@Body() body: { email: string; new_password: string }) {
-    return { ok: true, data: await this.auth.resetPassword(body.email, body.new_password) };
+  @Post('reset-password/request')
+  async requestPasswordReset(@Body() body: { email?: string }) {
+    return {
+      ok: true,
+      data: await this.auth.requestPasswordReset(body.email ?? ''),
+    };
+  }
+
+  @Post('reset-password/confirm')
+  async confirmPasswordReset(
+    @Body() body: { token?: string; new_password?: string },
+  ) {
+    return {
+      ok: true,
+      data: await this.auth.confirmPasswordReset(
+        body.token ?? '',
+        body.new_password ?? '',
+      ),
+    };
   }
 }

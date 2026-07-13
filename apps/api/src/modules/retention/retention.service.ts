@@ -1,6 +1,8 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
+import { WsServerEvents } from '@xenonchat/shared';
+import { RealtimeService } from '../realtime/realtime.service';
 
 @Injectable()
 export class RetentionService implements OnModuleInit, OnModuleDestroy {
@@ -10,6 +12,7 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   onModuleInit() {
@@ -64,6 +67,14 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
         });
         await this.prisma.messageAttachment.deleteMany({ where: { messageId: msg.id } });
         await this.prisma.messageLinkPreview.deleteMany({ where: { messageId: msg.id } });
+        await this.realtime.broadcastToConversation(msg.conversationId, {
+          event: WsServerEvents.MESSAGE_DELETE,
+          payload: {
+            conversation_id: msg.conversationId,
+            message_id: msg.id,
+            reason: 'expired',
+          },
+        });
       } catch (e) {
         this.logger.warn(`Failed cleanup for message ${msg.id}: ${String(e)}`);
       }
