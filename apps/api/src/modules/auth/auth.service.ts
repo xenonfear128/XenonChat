@@ -2,9 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
-import { createHash, randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
+import nodemailer from 'nodemailer';
 import { ErrorCodes, registerSchema, loginSchema } from '@xenonchat/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { RateLimitService } from '../../common/rate-limit/rate-limit.service';
 import { AppError } from '../../common/errors/app-error';
 import { AuthUser } from '../../common/auth/auth.guard';
@@ -16,6 +18,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly rateLimit: RateLimitService,
+    private readonly redis: RedisService,
   ) {}
 
   private hashToken(token: string) {
@@ -80,8 +83,15 @@ export class AuthService {
 
   async login(body: unknown, ip?: string, userAgent?: string) {
     const data = loginSchema.parse(body);
-    await this.rateLimit.assertLogin(data.email);
-    const user = await this.prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
+    await this.rateLimit.assertLogin(data.identifier);
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: data.identifier },
+          { username: data.identifier },
+        ],
+      },
+    });
     if (!user || user.status !== 'normal' || user.deletedAt) {
       throw new AppError(ErrorCodes.AUTH_INVALID_CREDENTIALS, 'Invalid credentials', 401);
     }
@@ -201,7 +211,11 @@ export class AuthService {
     return { success: true };
   }
 
-  async listDevices(userId: string) {
+  async listDevices(userId: string, currentSessionId: string) {
+    const currentSession = await this.prisma.userSession.findFirst({
+      where: { id: currentSessionId, userId, revokedAt: null },
+      select: { deviceId: true },
+    });
     const devices = await this.prisma.userDevice.findMany({
       where: { userId, revokedAt: null },
       orderBy: { lastSeenAt: 'desc' },
@@ -213,12 +227,18 @@ export class AuthService {
       user_agent: d.userAgent,
       last_seen_at: d.lastSeenAt.toISOString(),
       created_at: d.createdAt.toISOString(),
+      current: d.id === currentSession?.deviceId,
     }));
   }
 
   async revokeDevice(userId: string, deviceId: string, currentSessionId: string) {
     const device = await this.prisma.userDevice.findFirst({ where: { id: deviceId, userId } });
     if (!device) throw new AppError(ErrorCodes.NOT_FOUND, 'Device not found', 404);
+    const currentSession = await this.prisma.userSession.findFirst({
+      where: { id: currentSessionId, userId },
+      select: { deviceId: true },
+    });
+    const currentSessionRevoked = currentSession?.deviceId === deviceId;
     await this.prisma.userDevice.update({
       where: { id: deviceId },
       data: { revokedAt: new Date() },
@@ -227,7 +247,11 @@ export class AuthService {
       where: { deviceId, userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
-    return { success: true, current_session_revoked: false, current_session_id: currentSessionId };
+    return {
+      success: true,
+      current_session_revoked: currentSessionRevoked,
+      current_session_id: currentSessionId,
+    };
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
@@ -246,20 +270,108 @@ export class AuthService {
     return { success: true };
   }
 
-  /** Dev-friendly reset: sets password when email exists (no email delivery in MVP). */
-  async resetPassword(email: string, newPassword: string) {
-    if (!newPassword || newPassword.length < 8) {
-      throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Password too short');
+  async requestPasswordReset(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    await this.rateLimit.assertPasswordReset(normalizedEmail);
+    const genericResult: {
+      success: true;
+      reset_token?: string;
+      delivery?: 'email' | 'development';
+    } = { success: true };
+
+    if (
+      this.config.get('NODE_ENV', 'development') === 'production' &&
+      !this.config.get<string>('SMTP_HOST')
+    ) {
+      throw new AppError(
+        ErrorCodes.AUTH_PASSWORD_RESET_UNAVAILABLE,
+        'Password reset email is not configured',
+        503,
+      );
     }
-    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-    if (!user) {
-      // do not leak existence
-      return { success: true };
+
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      return genericResult;
     }
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+    if (!user || user.status !== 'normal' || user.deletedAt) {
+      return genericResult;
+    }
+
+    const token = randomBytes(32).toString('base64url');
+    const tokenHash = this.hashToken(token);
+    const ttlSeconds = Number(
+      this.config.get('PASSWORD_RESET_TOKEN_TTL_SECONDS', 900),
+    );
+    await this.redis.client.set(
+      `auth:password-reset:${tokenHash}`,
+      user.id,
+      'EX',
+      ttlSeconds,
+    );
+
+    const smtpHost = this.config.get<string>('SMTP_HOST');
+    if (smtpHost) {
+      const smtpUser = this.config.get<string>('SMTP_USER');
+      const smtpPass = this.config.get<string>('SMTP_PASSWORD');
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: Number(this.config.get('SMTP_PORT', 587)),
+        secure: this.config.get('SMTP_SECURE', 'false') === 'true',
+        auth:
+          smtpUser && smtpPass
+            ? { user: smtpUser, pass: smtpPass }
+            : undefined,
+      });
+      const appBaseUrl = this.config.get('APP_BASE_URL', 'http://localhost:3000');
+      const resetUrl = `${appBaseUrl.replace(/\/$/, '')}/forgot-password?token=${encodeURIComponent(token)}`;
+      await transporter.sendMail({
+        from: this.config.get('SMTP_FROM', 'XenonChat <no-reply@localhost>'),
+        to: user.email,
+        subject: 'Reset your XenonChat password',
+        text: `Open this link within ${Math.ceil(ttlSeconds / 60)} minutes: ${resetUrl}`,
+      });
+      return { success: true, delivery: 'email' };
+    }
+
+    if (
+      this.config.get('NODE_ENV', 'development') !== 'production' &&
+      this.config.get('DEV_EXPOSE_PASSWORD_RESET_TOKEN', 'true') === 'true'
+    ) {
+      return { success: true, reset_token: token, delivery: 'development' };
+    }
+
+    // Do not expose whether the account exists when email delivery is absent.
+    return genericResult;
+  }
+
+  async confirmPasswordReset(token: string, newPassword: string) {
+    if (!token || token.length < 32 || !newPassword || newPassword.length < 8) {
+      throw new AppError(
+        ErrorCodes.AUTH_INVALID_RESET_TOKEN,
+        'Invalid or expired password reset token',
+        400,
+      );
+    }
+    const tokenHash = this.hashToken(token);
+    const userId = await this.redis.client.getdel(
+      `auth:password-reset:${tokenHash}`,
+    );
+    if (!userId) {
+      throw new AppError(
+        ErrorCodes.AUTH_INVALID_RESET_TOKEN,
+        'Invalid or expired password reset token',
+        400,
+      );
+    }
+
     const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
-    await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
     await this.prisma.userSession.updateMany({
-      where: { userId: user.id, revokedAt: null },
+      where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
     return { success: true };

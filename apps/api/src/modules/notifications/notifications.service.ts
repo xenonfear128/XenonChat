@@ -27,20 +27,22 @@ export class NotificationsService {
         payload: input.payload as object | undefined,
       },
     });
-    await this.redis.pub.publish(
-      `ws:user:${input.userId}`,
-      JSON.stringify({
-        event: WsServerEvents.NOTIFICATION_NEW,
-        payload: {
-          id: n.id,
-          type: n.type,
-          title: n.title,
-          body: n.body,
-          payload: n.payload,
-          created_at: n.createdAt.toISOString(),
-        },
-      }),
-    );
+    await this.redis.pub
+      .publish(
+        `ws:user:${input.userId}`,
+        JSON.stringify({
+          event: WsServerEvents.NOTIFICATION_NEW,
+          payload: {
+            id: n.id,
+            type: n.type,
+            title: n.title,
+            body: n.body,
+            payload: n.payload,
+            created_at: n.createdAt.toISOString(),
+          },
+        }),
+      )
+      .catch(() => undefined);
     return n;
   }
 

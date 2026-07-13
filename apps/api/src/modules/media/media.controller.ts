@@ -67,19 +67,23 @@ export class MediaController {
     return { ok: true, data: await this.media.getDownload(user.id, id) };
   }
 
-  @Put('local-upload/:key')
+  @Put('local-upload/:token')
   async localUpload(
-    @Param('key') key: string,
+    @Param('token') token: string,
     @Req() req: { body: Buffer; headers: Record<string, string> },
   ) {
     const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? []);
-    await this.media.localUpload(key, buffer, req.headers['content-type'] ?? 'application/octet-stream');
+    await this.media.localUpload(
+      token,
+      buffer,
+      req.headers['content-type'] ?? 'application/octet-stream',
+    );
     return { ok: true, data: { success: true } };
   }
 
-  @Get('local/:key')
-  async localGet(@Param('key') key: string, @Res() reply: FastifyReply) {
-    const buf = await this.media.readLocal(key);
+  @Get('local/:token')
+  async localGet(@Param('token') token: string, @Res() reply: FastifyReply) {
+    const buf = await this.media.readLocal(token);
     reply.header('Content-Type', 'application/octet-stream');
     return reply.send(buf);
   }

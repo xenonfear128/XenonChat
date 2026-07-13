@@ -1,6 +1,10 @@
 'use client';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { configureApiAuth } from '@/lib/api';
 import { wsClient, WsServerEvents } from '@/lib/ws';
@@ -22,15 +26,14 @@ function applyTheme(theme: ThemeMode | string | undefined, corner: CornerStyle |
 }
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const accessToken = useAuthStore((s) => s.accessToken);
-  const refreshToken = useAuthStore((s) => s.refreshToken);
   const user = useAuthStore((s) => s.user);
   const hydrated = useAuthStore((s) => s.hydrated);
-  const setTokens = useAuthStore((s) => s.setTokens);
-  const clear = useAuthStore((s) => s.clear);
   const setHydrated = useAuthStore((s) => s.setHydrated);
   const appendMessage = useChatStore((s) => s.appendMessage);
   const replaceByClientId = useChatStore((s) => s.replaceByClientId);
+  const updateByClientId = useChatStore((s) => s.updateByClientId);
 
   useEffect(() => {
     configureApiAuth({
@@ -72,6 +75,7 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
     const offNew = wsClient.on(WsServerEvents.MESSAGE_NEW, (payload) => {
       const msg = payload as ChatMessage;
       if (msg?.conversation_id) appendMessage(msg.conversation_id, msg);
+      void queryClient.invalidateQueries({ queryKey: ['conversations'] });
     });
     const offAck = wsClient.on(WsServerEvents.MESSAGE_ACK, (payload) => {
       const data = payload as {
@@ -94,17 +98,56 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
         });
       }
     });
+    const offDelete = wsClient.on(WsServerEvents.MESSAGE_DELETE, (payload) => {
+      const data = payload as {
+        message_id?: string;
+        conversation_id?: string;
+      };
+      if (data.conversation_id && data.message_id) {
+        updateMessage(data.conversation_id, data.message_id, {
+          message_type: 'deleted',
+          body: null,
+          attachments: [],
+        });
+      }
+    });
+    const offError = wsClient.on(WsServerEvents.ERROR, (payload) => {
+      const data = payload as {
+        conversation_id?: string;
+        client_message_id?: string;
+      };
+      if (data.conversation_id && data.client_message_id) {
+        updateByClientId(data.conversation_id, data.client_message_id, {
+          pending: false,
+          failed: true,
+        });
+      }
+    });
+    const offConversation = wsClient.on(
+      WsServerEvents.CONVERSATION_UPDATED,
+      () => {
+        void queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      },
+    );
+    const offNotification = wsClient.on(WsServerEvents.NOTIFICATION_NEW, () => {
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      void queryClient.invalidateQueries({ queryKey: ['notification-count'] });
+    });
     return () => {
       offNew();
       offAck();
       offRevoke();
+      offDelete();
+      offError();
+      offConversation();
+      offNotification();
     };
-  }, [appendMessage, replaceByClientId]);
-
-  // silence unused in SSR path
-  void refreshToken;
-  void setTokens;
-  void clear;
+  }, [
+    appendMessage,
+    queryClient,
+    replaceByClientId,
+    updateByClientId,
+  ]);
 
   return <>{children}</>;
 }

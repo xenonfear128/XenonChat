@@ -18,8 +18,18 @@ export class WsClient {
   private retries = 0;
 
   connect(token: string) {
+    const tokenChanged = this.token !== token;
     this.token = token;
     this.intentionalClose = false;
+    if (
+      tokenChanged &&
+      this.ws &&
+      (this.ws.readyState === WebSocket.OPEN ||
+        this.ws.readyState === WebSocket.CONNECTING)
+    ) {
+      this.ws.close(4000, 'token refreshed');
+      return;
+    }
     this.open();
   }
 
@@ -54,8 +64,9 @@ export class WsClient {
 
   send(event: string, payload: unknown, requestId?: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
-    const envelope: WsEnvelope = { event, payload, request_id: requestId };
-    this.ws.send(JSON.stringify(envelope));
+    // Nest's WsAdapter consumes `{ event, data }`; server-originated events use
+    // the shared `{ event, payload }` envelope.
+    this.ws.send(JSON.stringify({ event, data: payload, request_id: requestId }));
     return true;
   }
 

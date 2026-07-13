@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppError } from '../../common/errors/app-error';
 import { StorageService } from '../../storage/storage.service';
+import { detectMimeFromBuffer } from '../../common/files/magic';
 
 @Injectable()
 export class UsersService {
@@ -39,7 +40,12 @@ export class UsersService {
         hideBlockedInGroups: boolean;
       } | null;
     },
-    opts: { includeEmail?: boolean; includePrivacy?: boolean; hideBio?: boolean } = {},
+    opts: {
+      includeEmail?: boolean;
+      includePrivacy?: boolean;
+      hideBio?: boolean;
+      hideLastSeen?: boolean;
+    } = {},
   ) {
     return {
       id: user.id,
@@ -51,7 +57,10 @@ export class UsersService {
       theme: user.theme,
       corner_style: user.cornerStyle,
       email: opts.includeEmail ? user.email : undefined,
-      last_seen_at: user.privacy?.showOnlineStatus === false ? undefined : user.lastSeenAt?.toISOString(),
+      last_seen_at:
+        opts.hideLastSeen || user.privacy?.showOnlineStatus === false
+          ? undefined
+          : user.lastSeenAt?.toISOString(),
       created_at: user.createdAt.toISOString(),
       privacy: opts.includePrivacy && user.privacy
         ? {
@@ -159,7 +168,10 @@ export class UsersService {
       },
     });
     return this.toPublic(user, {
-      hideBio: user.privacy?.showBio === false && viewerId !== userId,
+      hideBio:
+        Boolean(blocked) ||
+        (user.privacy?.showBio === false && viewerId !== userId),
+      hideLastSeen: Boolean(blocked),
     });
   }
 
@@ -185,22 +197,23 @@ export class UsersService {
 
   async setAvatar(userId: string, buffer: Buffer, mimeType: string, originalName: string) {
     const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(mimeType)) {
+    const detected = detectMimeFromBuffer(buffer);
+    if (!detected || !allowed.includes(detected.mime)) {
       throw new AppError(ErrorCodes.FILE_TYPE_NOT_ALLOWED, 'Avatar must be jpg/png/webp');
     }
     if (buffer.length > 5 * 1024 * 1024) {
       throw new AppError(ErrorCodes.FILE_TOO_LARGE, 'Avatar too large');
     }
-    const ext = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+    const ext = detected.ext;
     const key = this.storage.buildKey('avatars', ext);
-    await this.storage.putObject(key, buffer, mimeType);
+    await this.storage.putObject(key, buffer, detected.mime);
     const url = await this.storage.getSignedDownloadUrl(key, 60 * 60 * 24 * 7);
     const media = await this.prisma.mediaObject.create({
       data: {
         uploaderId: userId,
         storageKey: key,
         bucket: this.storage.getBucket(),
-        mimeType,
+        mimeType: detected.mime,
         sizeBytes: buffer.length,
         originalName,
         status: 'ready',

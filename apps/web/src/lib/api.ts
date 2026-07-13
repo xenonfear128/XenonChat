@@ -150,13 +150,24 @@ export const api = {
     nickname: string;
   }) => apiRequest<AuthTokens>('/auth/register', { method: 'POST', body, auth: false }),
 
-  login: (body: { email: string; password: string; device_name?: string }) =>
+  login: (body: { identifier: string; password: string; device_name?: string }) =>
     apiRequest<AuthTokens>('/auth/login', { method: 'POST', body, auth: false }),
 
   logout: () => apiRequest<{ success: boolean }>('/auth/logout', { method: 'POST' }),
 
-  resetPassword: (body: { email: string; new_password: string }) =>
-    apiRequest<{ success: boolean }>('/auth/reset-password', {
+  requestPasswordReset: (email: string) =>
+    apiRequest<{
+      success: boolean;
+      reset_token?: string;
+      delivery?: 'email' | 'development';
+    }>('/auth/reset-password/request', {
+      method: 'POST',
+      body: { email },
+      auth: false,
+    }),
+
+  confirmPasswordReset: (body: { token: string; new_password: string }) =>
+    apiRequest<{ success: boolean }>('/auth/reset-password/confirm', {
       method: 'POST',
       body,
       auth: false,

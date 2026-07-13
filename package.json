@@ -13,6 +13,7 @@
     "db:generate": "pnpm --filter @xenonchat/api prisma:generate",
     "db:migrate": "pnpm --filter @xenonchat/api prisma:migrate",
     "db:seed": "pnpm --filter @xenonchat/api prisma:seed",
+    "db:setup": "pnpm db:generate && pnpm db:migrate && pnpm db:seed",
     "db:studio": "pnpm --filter @xenonchat/api prisma:studio"
   },
   "devDependencies": {

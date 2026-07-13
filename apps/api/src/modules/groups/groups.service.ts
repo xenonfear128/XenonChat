@@ -176,13 +176,49 @@ export class GroupsService {
       throw new AppError(ErrorCodes.PERMISSION_DENIED, 'Cannot invite', 403);
     }
     const group = actor.group;
-    const remaining = group.maxMembers - group.memberCount;
-    if (userIds.length > remaining) {
+    const uniqueUserIds = Array.from(new Set(userIds)).filter(
+      (userId) => userId !== actorId,
+    );
+    const activeMembers = await this.prisma.groupMember.findMany({
+      where: {
+        groupId,
+        leftAt: null,
+      },
+      select: { userId: true },
+    });
+    const activeIds = new Set(activeMembers.map((member) => member.userId));
+    const toInvite = uniqueUserIds.filter((userId) => !activeIds.has(userId));
+    if (activeMembers.length + toInvite.length > group.maxMembers) {
       throw new AppError(ErrorCodes.GROUP_FULL, 'Group is full');
+    }
+    const validUsers = await this.prisma.user.count({
+      where: {
+        id: { in: toInvite },
+        status: 'normal',
+        deletedAt: null,
+      },
+    });
+    if (validUsers !== toInvite.length) {
+      throw new AppError(ErrorCodes.USER_NOT_FOUND, 'One or more users not found', 404);
+    }
+    const blockedTargets = await this.prisma.blockedUser.count({
+      where: {
+        OR: toInvite.flatMap((targetUserId) => [
+          { blockerUserId: actorId, blockedUserId: targetUserId },
+          { blockerUserId: targetUserId, blockedUserId: actorId },
+        ]),
+      },
+    });
+    if (blockedTargets > 0) {
+      throw new AppError(
+        ErrorCodes.USER_BLOCKED,
+        'A blocked user cannot be invited',
+        403,
+      );
     }
 
     const conversation = await this.prisma.conversation.findUniqueOrThrow({ where: { groupId } });
-    for (const uid of userIds) {
+    for (const uid of toInvite) {
       const existing = await this.prisma.groupMember.findUnique({
         where: { groupId_userId: { groupId, userId: uid } },
       });

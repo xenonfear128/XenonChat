@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AuthShell } from '@/components/auth/AuthShell';
 import { Button, Field, Input } from '@/components/ui';
@@ -14,12 +14,18 @@ export default function RegisterPage() {
   const te = useTranslations('errors');
   const router = useRouter();
   const setSession = useAuthStore((s) => s.setSession);
+  const hydrated = useAuthStore((s) => s.hydrated);
+  const accessToken = useAuthStore((s) => s.accessToken);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [nickname, setNickname] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (hydrated && accessToken) router.replace('/chats');
+  }, [accessToken, hydrated, router]);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();

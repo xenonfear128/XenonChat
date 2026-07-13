@@ -8,7 +8,7 @@ import {
   AllowedChatMessageType,
   WsServerEvents,
 } from '@xenonchat/shared';
-import { FormatMode, MessageType } from '@prisma/client';
+import { FormatMode, MessageType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppError } from '../../common/errors/app-error';
 import { ConversationsService } from '../conversations/conversations.service';
@@ -30,6 +30,66 @@ export class MessagesService {
     @Inject(forwardRef(() => RealtimeService))
     private readonly realtime: RealtimeService,
   ) {}
+
+  private async validateAttachments(
+    userId: string,
+    messageType: string,
+    ids: string[] | undefined,
+  ) {
+    const attachmentIds = Array.from(new Set(ids ?? []));
+    if (messageType === 'text' && attachmentIds.length > 0) {
+      throw new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        'Text messages cannot contain attachments',
+        400,
+      );
+    }
+    if (messageType !== 'text' && attachmentIds.length === 0) {
+      throw new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        'This message type requires an attachment',
+        400,
+      );
+    }
+    if (attachmentIds.length === 0) return attachmentIds;
+
+    const media = await this.prisma.mediaObject.findMany({
+      where: {
+        id: { in: attachmentIds },
+        uploaderId: userId,
+        status: 'ready',
+        deletedAt: null,
+      },
+      select: { id: true, mimeType: true },
+    });
+    if (media.length !== attachmentIds.length) {
+      throw new AppError(
+        ErrorCodes.PERMISSION_DENIED,
+        'One or more attachments are unavailable',
+        403,
+      );
+    }
+
+    const expectedPrefix =
+      messageType === 'image'
+        ? 'image/'
+        : messageType === 'video'
+          ? 'video/'
+          : messageType === 'voice'
+            ? 'audio/'
+            : null;
+    if (
+      expectedPrefix &&
+      media.some((item) => !item.mimeType.startsWith(expectedPrefix))
+    ) {
+      throw new AppError(
+        ErrorCodes.FILE_TYPE_NOT_ALLOWED,
+        'Attachment type does not match the message type',
+        400,
+      );
+    }
+    return attachmentIds;
+  }
 
   serializeMessage(m: {
     id: string;
@@ -174,7 +234,24 @@ export class MessagesService {
     conversationId: string,
     opts: { before?: string; limit?: number; after?: string } = {},
   ) {
-    await this.conversations.assertMember(userId, conversationId);
+    const membership = await this.conversations.assertMember(
+      userId,
+      conversationId,
+    );
+    let hiddenSenderIds: string[] = [];
+    if (membership.conversation.type === 'group') {
+      const privacy = await this.prisma.userPrivacy.findUnique({
+        where: { userId },
+        select: { hideBlockedInGroups: true },
+      });
+      if (privacy?.hideBlockedInGroups) {
+        const blocks = await this.prisma.blockedUser.findMany({
+          where: { blockerUserId: userId },
+          select: { blockedUserId: true },
+        });
+        hiddenSenderIds = blocks.map((block) => block.blockedUserId);
+      }
+    }
     const limit = Math.min(opts.limit ?? 50, 100);
     let beforeDate: Date | undefined;
     let afterDate: Date | undefined;
@@ -193,6 +270,9 @@ export class MessagesService {
         deletedAt: null,
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
         deletions: { none: { userId } },
+        ...(hiddenSenderIds.length
+          ? { senderUserId: { notIn: hiddenSenderIds } }
+          : {}),
         ...(beforeDate ? { createdAt: { lt: beforeDate } } : {}),
         ...(afterDate ? { createdAt: { gt: afterDate } } : {}),
       },
@@ -287,6 +367,11 @@ export class MessagesService {
     if (['text'].includes(data.message_type) && !data.body?.trim()) {
       throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Message body required');
     }
+    const attachmentIds = await this.validateAttachments(
+      userId,
+      data.message_type,
+      data.attachment_ids,
+    );
 
     // Quote validation
     let quoteCreate:
@@ -344,34 +429,56 @@ export class MessagesService {
     const createdAt = new Date();
     const expiresAt = computeExpiresAt(createdAt, ttlSeconds);
 
-    const message = await this.prisma.message.create({
-      data: {
-        conversationId: data.conversation_id,
-        senderUserId: userId,
-        clientMessageId: data.client_message_id,
-        messageType: data.message_type as MessageType,
-        body: data.body,
-        formatMode: data.format_mode as FormatMode,
-        ttlSeconds: ttlSeconds || null,
-        expiresAt,
-        createdAt,
-        quote: quoteCreate ? { create: quoteCreate } : undefined,
-        attachments: data.attachment_ids?.length
-          ? {
-              create: data.attachment_ids.map((mediaId, i) => ({
-                mediaId,
-                sortOrder: i,
-              })),
-            }
-          : undefined,
-      },
-      include: {
-        sender: true,
-        quote: true,
-        attachments: { include: { media: true } },
-        linkPreviews: { include: { linkPreview: true } },
-      },
-    });
+    const message = await this.prisma.message
+      .create({
+        data: {
+          conversationId: data.conversation_id,
+          senderUserId: userId,
+          clientMessageId: data.client_message_id,
+          messageType: data.message_type as MessageType,
+          body: data.body,
+          formatMode: data.format_mode as FormatMode,
+          ttlSeconds: ttlSeconds || null,
+          expiresAt,
+          createdAt,
+          quote: quoteCreate ? { create: quoteCreate } : undefined,
+          attachments: attachmentIds.length
+            ? {
+                create: attachmentIds.map((mediaId, i) => ({
+                  mediaId,
+                  sortOrder: i,
+                })),
+              }
+            : undefined,
+        },
+        include: {
+          sender: true,
+          quote: true,
+          attachments: { include: { media: true } },
+          linkPreviews: { include: { linkPreview: true } },
+        },
+      })
+      .catch(async (error: unknown) => {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          const racedMessage = await this.prisma.message.findFirst({
+            where: {
+              senderUserId: userId,
+              clientMessageId: data.client_message_id,
+            },
+            include: {
+              sender: true,
+              quote: true,
+              attachments: { include: { media: true } },
+              linkPreviews: { include: { linkPreview: true } },
+            },
+          });
+          if (racedMessage) return racedMessage;
+        }
+        throw error;
+      });
 
     await this.prisma.conversation.update({
       where: { id: data.conversation_id },
@@ -454,6 +561,7 @@ export class MessagesService {
   async report(userId: string, messageId: string, reason: string) {
     const message = await this.prisma.message.findUnique({ where: { id: messageId } });
     if (!message) throw new AppError(ErrorCodes.MESSAGE_NOT_FOUND, 'Not found', 404);
+    await this.conversations.assertMember(userId, message.conversationId);
     await this.prisma.messageReport.create({
       data: { messageId, reporterId: userId, reason: reason.slice(0, 500) },
     });

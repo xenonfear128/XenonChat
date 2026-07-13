@@ -37,6 +37,7 @@ export default function ChatThreadPage() {
   const updateMessage = useChatStore((s) => s.updateMessage);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const lastMessageId = messages.at(-1)?.id;
 
   const convQuery = useQuery({
     queryKey: ['conversation', id],
@@ -60,10 +61,15 @@ export default function ChatThreadPage() {
 
   useEffect(() => {
     if (!id) return;
-    void api.markRead(id).then(() => {
-      qc.invalidateQueries({ queryKey: ['conversations'] });
-    });
-  }, [id, messages.length, qc]);
+    const serverMessageId = lastMessageId?.startsWith('tmp-')
+      ? undefined
+      : lastMessageId;
+    if (!wsClient.markRead(id, serverMessageId)) {
+      void api.markRead(id, serverMessageId).then(() => {
+        qc.invalidateQueries({ queryKey: ['conversations'] });
+      });
+    }
+  }, [id, lastMessageId, qc]);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMore || messages.length === 0) return;
@@ -137,6 +143,30 @@ export default function ChatThreadPage() {
       } catch {
         updateMessage(id, optimistic.id, { pending: false, failed: true });
       }
+    } else {
+      // A connection may drop after WebSocket.send() succeeds but before the
+      // server ACK arrives. Retry through HTTP with the same client_message_id;
+      // backend idempotency prevents duplicates.
+      window.setTimeout(async () => {
+        const current = useChatStore
+          .getState()
+          .messagesByConversation[id]?.find(
+            (message) => message.client_message_id === client_message_id,
+          );
+        if (!current || (!current.pending && !current.failed)) return;
+        try {
+          const message = await api.sendMessage(body);
+          useChatStore
+            .getState()
+            .replaceByClientId(id, client_message_id, message);
+          void qc.invalidateQueries({ queryKey: ['conversations'] });
+        } catch {
+          useChatStore.getState().updateByClientId(id, client_message_id, {
+            pending: false,
+            failed: true,
+          });
+        }
+      }, 8_000);
     }
     setQuote(null);
   };

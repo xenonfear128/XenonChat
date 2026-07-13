@@ -64,6 +64,31 @@ export class ContactsService {
     if (target.privacy?.friendRequestPolicy === 'nobody') {
       throw new AppError(ErrorCodes.PERMISSION_DENIED, 'User does not accept friend requests', 403);
     }
+    if (target.privacy?.friendRequestPolicy === 'mutual_groups') {
+      const mutualGroup = await this.prisma.groupMember.findFirst({
+        where: {
+          userId: fromUserId,
+          leftAt: null,
+          group: {
+            status: 'normal',
+            members: {
+              some: {
+                userId: data.to_user_id,
+                leftAt: null,
+              },
+            },
+          },
+        },
+        select: { id: true },
+      });
+      if (!mutualGroup) {
+        throw new AppError(
+          ErrorCodes.PERMISSION_DENIED,
+          'A mutual group is required',
+          403,
+        );
+      }
+    }
 
     if (await this.areFriends(fromUserId, data.to_user_id)) {
       throw new AppError(ErrorCodes.ALREADY_FRIENDS, 'Already friends');

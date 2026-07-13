@@ -9,7 +9,7 @@ export function LinkPreviewCard({ preview }: { preview: LinkPreview }) {
       className={styles.card}
       href={preview.url}
       target="_blank"
-      rel="noopener noreferrer"
+      rel="noopener noreferrer nofollow ugc"
     >
       {preview.image_url ? (
         // eslint-disable-next-line @next/next/no-img-element

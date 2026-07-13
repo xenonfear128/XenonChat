@@ -47,6 +47,15 @@ export function MarkdownBody({
             ? [[rehypeSanitize, schema], rehypeKatex]
             : [[rehypeSanitize, schema]]
         }
+        components={{
+          a: ({ node: _node, ...props }) => (
+            <a
+              {...props}
+              target="_blank"
+              rel="noopener noreferrer nofollow ugc"
+            />
+          ),
+        }}
       >
         {source}
       </ReactMarkdown>

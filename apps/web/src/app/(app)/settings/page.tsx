@@ -117,9 +117,11 @@ export default function SettingsPage() {
     onSuccess: () => {
       setCurrentPassword('');
       setNewPassword('');
-      setSecurityMsg(t('saved'));
+      wsClient.disconnect();
+      clear();
+      router.replace('/login');
     },
-    onError: () => setSecurityMsg('Failed'),
+    onError: () => setSecurityMsg(t('saveFailed')),
   });
 
   const revokeMut = useMutation({
@@ -294,7 +296,7 @@ export default function SettingsPage() {
           ) : null}
 
           {tab === 'privacy' && !privacy ? (
-            <p className={styles.muted}>Privacy settings unavailable.</p>
+            <p className={styles.muted}>{t('privacyUnavailable')}</p>
           ) : null}
 
           {tab === 'devices' ? (

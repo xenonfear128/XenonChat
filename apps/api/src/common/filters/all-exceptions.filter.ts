@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { ErrorCodes } from '@xenonchat/shared';
+import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
 import { AppError } from '../errors/app-error';
 
 @Catch()
@@ -25,6 +27,39 @@ export class AllExceptionsFilter implements ExceptionFilter {
           retry_after_ms: exception.retryAfterMs,
         },
       });
+    }
+
+    if (exception instanceof ZodError) {
+      return reply.status(HttpStatus.BAD_REQUEST).send({
+        ok: false,
+        error: {
+          code: ErrorCodes.VALIDATION_ERROR,
+          message: 'Request validation failed',
+          details: exception.flatten(),
+        },
+      });
+    }
+
+    if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+      if (exception.code === 'P2002') {
+        return reply.status(HttpStatus.CONFLICT).send({
+          ok: false,
+          error: {
+            code: ErrorCodes.VALIDATION_ERROR,
+            message: 'A unique value is already in use',
+            details: { fields: exception.meta?.target },
+          },
+        });
+      }
+      if (exception.code === 'P2025') {
+        return reply.status(HttpStatus.NOT_FOUND).send({
+          ok: false,
+          error: {
+            code: ErrorCodes.NOT_FOUND,
+            message: 'Resource not found',
+          },
+        });
+      }
     }
 
     if (exception instanceof HttpException) {

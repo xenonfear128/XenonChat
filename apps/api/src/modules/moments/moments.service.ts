@@ -43,20 +43,55 @@ export class MomentsService {
 
   async create(userId: string, body: unknown) {
     const data = createMomentSchema.parse(body);
+    const mediaIds = Array.from(new Set(data.media_ids ?? []));
+    if (!data.body?.trim() && mediaIds.length === 0) {
+      throw new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        'A moment needs text or media',
+        400,
+      );
+    }
+    if (mediaIds.length > 0) {
+      const ownedMedia = await this.prisma.mediaObject.count({
+        where: {
+          id: { in: mediaIds },
+          uploaderId: userId,
+          status: 'ready',
+          deletedAt: null,
+        },
+      });
+      if (ownedMedia !== mediaIds.length) {
+        throw new AppError(
+          ErrorCodes.PERMISSION_DENIED,
+          'One or more media objects are unavailable',
+          403,
+        );
+      }
+    }
+    const selectedUserIds = Array.from(
+      new Set(data.selected_user_ids ?? []),
+    ).filter((id) => id !== userId);
+    if (data.visibility === 'selected' && selectedUserIds.length === 0) {
+      throw new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        'Selected visibility needs at least one user',
+        400,
+      );
+    }
     const post = await this.prisma.momentPost.create({
       data: {
         authorId: userId,
         body: data.body,
         visibility: data.visibility as MomentVisibility,
-        media: data.media_ids?.length
+        media: mediaIds.length
           ? {
-              create: data.media_ids.map((mediaId, i) => ({ mediaId, sortOrder: i })),
+              create: mediaIds.map((mediaId, i) => ({ mediaId, sortOrder: i })),
             }
           : undefined,
         visibilityRules:
-          data.visibility === 'selected' && data.selected_user_ids?.length
+          data.visibility === 'selected' && selectedUserIds.length
             ? {
-                create: data.selected_user_ids.map((uid) => ({ userId: uid })),
+                create: selectedUserIds.map((uid) => ({ userId: uid })),
               }
             : undefined,
       },
@@ -126,13 +161,22 @@ export class MomentsService {
   }
 
   async feed(viewerId: string, cursor?: string, limit = 20) {
+    const cursorDate = cursor ? new Date(cursor) : undefined;
+    if (cursorDate && Number.isNaN(cursorDate.getTime())) {
+      throw new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        'Invalid feed cursor',
+        400,
+      );
+    }
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
     const posts = await this.prisma.momentPost.findMany({
       where: {
         deletedAt: null,
-        ...(cursor ? { createdAt: { lt: new Date(cursor) } } : {}),
+        ...(cursorDate ? { createdAt: { lt: cursorDate } } : {}),
       },
       orderBy: { createdAt: 'desc' },
-      take: limit * 3,
+      take: safeLimit * 3,
       include: {
         author: { include: { privacy: true } },
         media: { include: { media: true } },
@@ -151,7 +195,7 @@ export class MomentsService {
       if (await this.canView(viewerId, p)) {
         visible.push(this.serialize(p, viewerId));
       }
-      if (visible.length >= limit) break;
+      if (visible.length >= safeLimit) break;
     }
     return visible;
   }
@@ -187,6 +231,14 @@ export class MomentsService {
   }
 
   async comment(userId: string, postId: string, body: string) {
+    const normalizedBody = body.trim();
+    if (!normalizedBody) {
+      throw new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        'Comment cannot be empty',
+        400,
+      );
+    }
     const post = await this.prisma.momentPost.findFirst({
       where: { id: postId, deletedAt: null },
       include: { author: { include: { privacy: true } } },
@@ -196,7 +248,11 @@ export class MomentsService {
     }
     await this.blocks.assertNotBlocked(userId, post.authorId);
     const comment = await this.prisma.momentComment.create({
-      data: { postId, authorId: userId, body: body.slice(0, 1000) },
+      data: {
+        postId,
+        authorId: userId,
+        body: normalizedBody.slice(0, 1000),
+      },
       include: { author: true },
     });
     if (post.authorId !== userId) {
@@ -204,7 +260,7 @@ export class MomentsService {
         userId: post.authorId,
         type: 'moment_comment',
         title: 'New comment on your moment',
-        body: body.slice(0, 100),
+        body: normalizedBody.slice(0, 100),
         payload: { post_id: postId, comment_id: comment.id },
       });
     }
@@ -265,6 +321,17 @@ export class MomentsService {
   }
 
   async unreact(userId: string, postId: string, reaction = 'like') {
+    const post = await this.prisma.momentPost.findFirst({
+      where: { id: postId, deletedAt: null },
+      include: { author: { include: { privacy: true } } },
+    });
+    if (!post || !(await this.canView(userId, post))) {
+      throw new AppError(
+        ErrorCodes.MOMENT_NOT_VISIBLE,
+        'Moment not visible',
+        403,
+      );
+    }
     await this.prisma.momentReaction.deleteMany({
       where: { postId, userId, reaction },
     });
@@ -272,6 +339,17 @@ export class MomentsService {
   }
 
   async report(userId: string, postId: string, reason: string) {
+    const post = await this.prisma.momentPost.findFirst({
+      where: { id: postId, deletedAt: null },
+      include: { author: { include: { privacy: true } } },
+    });
+    if (!post || !(await this.canView(userId, post))) {
+      throw new AppError(
+        ErrorCodes.MOMENT_NOT_VISIBLE,
+        'Moment not visible',
+        403,
+      );
+    }
     await this.prisma.momentReport.create({
       data: { postId, reporterId: userId, reason: reason.slice(0, 500) },
     });

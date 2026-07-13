@@ -6,30 +6,69 @@ import { AppError } from '../errors/app-error';
 
 @Injectable()
 export class RateLimitService {
+  private readonly localWindows = new Map<
+    string,
+    { count: number; expiresAt: number }
+  >();
+
   constructor(
     private readonly redis: RedisService,
     private readonly config: ConfigService,
   ) {}
 
-  /**
-   * Token-bucket style limiter using Redis INCR + EXPIRE window.
-   * Returns retry_after_ms when limited.
-   */
+  /** Fixed-window limiter backed by Redis with a per-process safety fallback. */
   async consume(
     key: string,
     limit: number,
     windowMs: number,
   ): Promise<{ allowed: boolean; retryAfterMs?: number; remaining: number }> {
     const redisKey = `rate:${key}`;
-    const count = await this.redis.client.incr(redisKey);
-    if (count === 1) {
-      await this.redis.client.pexpire(redisKey, windowMs);
+    try {
+      const count = await this.redis.client.incr(redisKey);
+      if (count === 1) {
+        await this.redis.client.pexpire(redisKey, windowMs);
+      }
+      const ttl = await this.redis.client.pttl(redisKey);
+      if (count > limit) {
+        return { allowed: false, retryAfterMs: Math.max(ttl, 1), remaining: 0 };
+      }
+      return { allowed: true, remaining: Math.max(limit - count, 0) };
+    } catch {
+      // Keep authentication and local development usable during a Redis outage
+      // without disabling protection completely. Distributed deployments still
+      // report Redis as unhealthy via /ready.
+      return this.consumeLocally(redisKey, limit, windowMs);
     }
-    const ttl = await this.redis.client.pttl(redisKey);
-    if (count > limit) {
-      return { allowed: false, retryAfterMs: Math.max(ttl, 1), remaining: 0 };
+  }
+
+  private consumeLocally(
+    key: string,
+    limit: number,
+    windowMs: number,
+  ): { allowed: boolean; retryAfterMs?: number; remaining: number } {
+    const now = Date.now();
+    const current = this.localWindows.get(key);
+    const window =
+      !current || current.expiresAt <= now
+        ? { count: 0, expiresAt: now + windowMs }
+        : current;
+    window.count += 1;
+    this.localWindows.set(key, window);
+
+    if (this.localWindows.size > 10_000) {
+      for (const [entryKey, entry] of this.localWindows) {
+        if (entry.expiresAt <= now) this.localWindows.delete(entryKey);
+      }
     }
-    return { allowed: true, remaining: Math.max(limit - count, 0) };
+
+    if (window.count > limit) {
+      return {
+        allowed: false,
+        retryAfterMs: Math.max(window.expiresAt - now, 1),
+        remaining: 0,
+      };
+    }
+    return { allowed: true, remaining: Math.max(limit - window.count, 0) };
   }
 
   async assertUserMessage(userId: string, conversationId: string) {
@@ -103,6 +142,23 @@ export class RateLimitService {
     const result = await this.consume(`login:${email.toLowerCase()}`, 10, 15 * 60 * 1000);
     if (!result.allowed) {
       throw new AppError(ErrorCodes.AUTH_RATE_LIMITED, 'Too many login attempts', 429, undefined, result.retryAfterMs);
+    }
+  }
+
+  async assertPasswordReset(identifier: string) {
+    const result = await this.consume(
+      `password_reset:${identifier.toLowerCase()}`,
+      5,
+      60 * 60 * 1000,
+    );
+    if (!result.allowed) {
+      throw new AppError(
+        ErrorCodes.AUTH_RATE_LIMITED,
+        'Too many password reset attempts',
+        429,
+        undefined,
+        result.retryAfterMs,
+      );
     }
   }
 

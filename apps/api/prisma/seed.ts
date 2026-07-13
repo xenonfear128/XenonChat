@@ -8,7 +8,13 @@ async function main() {
 
   const alice = await prisma.user.upsert({
     where: { email: 'alice@xenonchat.local' },
-    update: {},
+    update: {
+      passwordHash,
+      nickname: 'Alice',
+      bio: 'Hello from Alice',
+      status: 'normal',
+      deletedAt: null,
+    },
     create: {
       email: 'alice@xenonchat.local',
       username: 'alice',
@@ -21,7 +27,14 @@ async function main() {
 
   const bob = await prisma.user.upsert({
     where: { email: 'bob@xenonchat.local' },
-    update: {},
+    update: {
+      passwordHash,
+      nickname: 'Bob',
+      bio: 'Hello from Bob',
+      language: 'en_US',
+      status: 'normal',
+      deletedAt: null,
+    },
     create: {
       email: 'bob@xenonchat.local',
       username: 'bob',
@@ -35,7 +48,12 @@ async function main() {
 
   const carol = await prisma.user.upsert({
     where: { email: 'carol@xenonchat.local' },
-    update: {},
+    update: {
+      passwordHash,
+      nickname: 'Carol',
+      status: 'normal',
+      deletedAt: null,
+    },
     create: {
       email: 'carol@xenonchat.local',
       username: 'carol',
@@ -44,6 +62,14 @@ async function main() {
       privacy: { create: {} },
     },
   });
+
+  for (const user of [alice, bob, carol]) {
+    await prisma.userPrivacy.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id },
+      update: {},
+    });
+  }
 
   // Mutual friendships alice-bob, alice-carol
   for (const [a, b] of [
@@ -65,7 +91,14 @@ async function main() {
 
   const group = await prisma.group.upsert({
     where: { publicId: 'xenon_lounge' },
-    update: {},
+    update: {
+      name: 'Xenon Lounge',
+      description: 'Welcome to XenonChat demo group',
+      ownerUserId: alice.id,
+      maxMembers: 500,
+      status: 'normal',
+      dissolvedAt: null,
+    },
     create: {
       publicId: 'xenon_lounge',
       name: 'Xenon Lounge',
@@ -83,16 +116,38 @@ async function main() {
     },
   });
 
-  const existingConv = await prisma.conversation.findUnique({ where: { groupId: group.id } });
-  if (!existingConv) {
-    await prisma.conversation.create({
+  for (const [userId, role] of [
+    [alice.id, 'owner'],
+    [bob.id, 'admin'],
+    [carol.id, 'member'],
+  ] as const) {
+    await prisma.groupMember.upsert({
+      where: { groupId_userId: { groupId: group.id, userId } },
+      create: { groupId: group.id, userId, role },
+      update: { role, leftAt: null, mutedUntil: null },
+    });
+  }
+  await prisma.group.update({
+    where: { id: group.id },
+    data: { memberCount: 3 },
+  });
+
+  let conversation = await prisma.conversation.findUnique({ where: { groupId: group.id } });
+  if (!conversation) {
+    conversation = await prisma.conversation.create({
       data: {
         type: 'group',
         groupId: group.id,
-        members: {
-          create: [{ userId: alice.id }, { userId: bob.id }, { userId: carol.id }],
-        },
       },
+    });
+  }
+  for (const userId of [alice.id, bob.id, carol.id]) {
+    await prisma.conversationMember.upsert({
+      where: {
+        conversationId_userId: { conversationId: conversation.id, userId },
+      },
+      create: { conversationId: conversation.id, userId },
+      update: { leftAt: null },
     });
   }
 

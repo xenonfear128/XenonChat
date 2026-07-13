@@ -82,6 +82,10 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
           code: (e as { code?: string }).code ?? 'INTERNAL_ERROR',
           message: e instanceof Error ? e.message : 'error',
           retry_after_ms: (e as { retryAfterMs?: number }).retryAfterMs,
+          conversation_id: (body as { conversation_id?: string } | undefined)
+            ?.conversation_id,
+          client_message_id: (body as { client_message_id?: string } | undefined)
+            ?.client_message_id,
         },
       });
     }
@@ -94,15 +98,19 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   ) {
     const userId = (client as WebSocket & { userId?: string }).userId;
     if (!userId) return;
-    await this.conversations.markRead(userId, body.conversation_id, body.message_id);
-    await this.realtime.broadcastToConversation(body.conversation_id, {
-      event: WsServerEvents.MESSAGE_READ,
-      payload: {
-        conversation_id: body.conversation_id,
-        user_id: userId,
-        message_id: body.message_id,
-      },
-    });
+    try {
+      await this.conversations.markRead(userId, body.conversation_id, body.message_id);
+      await this.realtime.broadcastToConversation(body.conversation_id, {
+        event: WsServerEvents.MESSAGE_READ,
+        payload: {
+          conversation_id: body.conversation_id,
+          user_id: userId,
+          message_id: body.message_id,
+        },
+      });
+    } catch (e) {
+      this.sendError(client, e);
+    }
   }
 
   @SubscribeMessage(WsClientEvents.TYPING_START)
@@ -112,10 +120,15 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   ) {
     const userId = (client as WebSocket & { userId?: string }).userId;
     if (!userId) return;
-    await this.realtime.broadcastToConversation(body.conversation_id, {
-      event: WsServerEvents.TYPING_START,
-      payload: { conversation_id: body.conversation_id, user_id: userId },
-    });
+    try {
+      await this.conversations.assertMember(userId, body.conversation_id);
+      await this.realtime.broadcastToConversation(body.conversation_id, {
+        event: WsServerEvents.TYPING_START,
+        payload: { conversation_id: body.conversation_id, user_id: userId },
+      });
+    } catch (e) {
+      this.sendError(client, e);
+    }
   }
 
   @SubscribeMessage(WsClientEvents.TYPING_STOP)
@@ -125,9 +138,25 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   ) {
     const userId = (client as WebSocket & { userId?: string }).userId;
     if (!userId) return;
-    await this.realtime.broadcastToConversation(body.conversation_id, {
-      event: WsServerEvents.TYPING_STOP,
-      payload: { conversation_id: body.conversation_id, user_id: userId },
+    try {
+      await this.conversations.assertMember(userId, body.conversation_id);
+      await this.realtime.broadcastToConversation(body.conversation_id, {
+        event: WsServerEvents.TYPING_STOP,
+        payload: { conversation_id: body.conversation_id, user_id: userId },
+      });
+    } catch (e) {
+      this.sendError(client, e);
+    }
+  }
+
+  private sendError(client: WebSocket, error: unknown) {
+    this.realtime.send(client, {
+      event: WsServerEvents.ERROR,
+      payload: {
+        code: (error as { code?: string }).code ?? 'INTERNAL_ERROR',
+        message: error instanceof Error ? error.message : 'error',
+        retry_after_ms: (error as { retryAfterMs?: number }).retryAfterMs,
+      },
     });
   }
 }
